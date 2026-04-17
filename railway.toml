@@ -1,0 +1,9 @@
+# Railway deployment config
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300 
+# Tang timeout len 300s (5 phut) de tranh bi kill som luc dang build/init

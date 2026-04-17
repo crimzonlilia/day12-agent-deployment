@@ -1,0 +1,80 @@
+version: "3.9"
+
+# ============================================================
+# Production Docker Compose
+# Architecture: Nginx → Agent×3 → Redis
+#
+# Run:   docker compose up --scale agent=3
+# Stop:  docker compose down
+# ============================================================
+
+services:
+
+  # ── Load Balancer ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      agent:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── AI Agent (scale to 3) ─────────────────────────────────
+  agent:
+    build: .
+    # Không expose port trực tiếp — chỉ Nginx mới access được
+    expose:
+      - "8000"
+    environment:
+      - ENVIRONMENT=staging
+      - APP_NAME=My Production Agent
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - RATE_LIMIT_PER_MINUTE=10
+      - MONTHLY_BUDGET_USD=10.0
+    env_file:
+      - .env           # AGENT_API_KEY, OPENAI_API_KEY, v.v.
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # Graceful shutdown — để agent xử lý xong requests hiện tại
+    stop_grace_period: 30s
+
+  # ── Redis (Stateless State Store) ─────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    expose:
+      - "6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
